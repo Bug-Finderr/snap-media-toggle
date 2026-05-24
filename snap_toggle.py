@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import argparse
 import sys
-import threading
 import time
 from datetime import datetime
 from pathlib import Path
@@ -44,6 +43,10 @@ def to_mono_samples(indata: Any) -> list[float]:
     return [float(row[0]) if len(row) == 1 else float(sum(row) / len(row)) for row in indata]
 
 
+def stream_is_stale(last_callback_time: float, now: float, timeout_seconds: float) -> bool:
+    return now - last_callback_time > timeout_seconds
+
+
 def list_devices() -> int:
     import sounddevice as sd
 
@@ -56,9 +59,11 @@ def listen(config_path: Path, dry_run: bool) -> int:
 
     config = load_config(config_path)
     detector = SnapDetector(detector_config(config))
-    stop_event = threading.Event()
+    last_callback_time = time.perf_counter()
 
     def callback(indata: Any, frames: int, time_info: Any, status: Any) -> None:
+        nonlocal last_callback_time
+        last_callback_time = time.perf_counter()
         if status:
             log(f"audio status: {status}")
         if not detector.process_block(to_mono_samples(indata), time.perf_counter()):
@@ -69,14 +74,20 @@ def listen(config_path: Path, dry_run: bool) -> int:
 
     log("listener starting" + (" in dry-run mode" if dry_run else ""))
     try:
-        with sd.InputStream(
-            device=config["device"],
-            channels=int(config["channels"]),
-            samplerate=int(config["sample_rate"]),
-            blocksize=int(config["block_size"]),
-            callback=callback,
-        ):
-            stop_event.wait()
+        while True:
+            last_callback_time = time.perf_counter()
+            with sd.InputStream(
+                device=config["device"],
+                channels=int(config["channels"]),
+                samplerate=int(config["sample_rate"]),
+                blocksize=int(config["block_size"]),
+                callback=callback,
+            ):
+                while True:
+                    time.sleep(5)
+                    if stream_is_stale(last_callback_time, time.perf_counter(), float(config["stream_timeout_seconds"])):
+                        log("audio stream stale; restarting")
+                        break
     except KeyboardInterrupt:
         log("listener stopped")
         return 0

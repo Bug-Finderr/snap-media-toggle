@@ -15,6 +15,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "min_crest_factor": 6.0,
     "max_active_fraction": 0.08,
     "noise_floor_alpha": 0.05,
+    "stream_timeout_seconds": 30.0,
     "device": None,
 }
 
